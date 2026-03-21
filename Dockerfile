@@ -1,4 +1,4 @@
-# FastAPI moderasyon API — Ollama ayrı serviste (docker-compose) veya Railway’de OLLAMA_HTTP_URL ile
+# FastAPI moderasyon API — docker-compose içinde `ollama` servisine OLLAMA_HTTP_URL ile bağlanır
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
