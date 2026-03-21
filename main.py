@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+from contextlib import asynccontextmanager
+from typing import Any
+
+import requests
+from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
+
+GUVENLI_KELIMELER = {"makrome", "örgü", "dantel", "iğne oyası", "elişi", "hobi", "amigurumi", "kasnak"}
+
+
+def _ollama_model_tag() -> str:
+    m = os.environ.get("OLLAMA_MODEL", "llama3").strip()
+    if not m:
+        m = "llama3"
+    return m if ":" in m else f"{m}:latest"
+
+
+def _ollama_base_url() -> str:
+    return os.environ.get("OLLAMA_HTTP_URL", "http://127.0.0.1:11434").rstrip("/")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print(
+        f"OLLAMA_HTTP_URL → {_ollama_base_url()} "
+        "(Railway: ayrı Ollama servisinin private URL’ini Variables’a yaz)",
+        flush=True,
+    )
+    yield
+
+
+app = FastAPI(title="Marifetli Akıllı Moderasyon API", lifespan=lifespan)
+
+
+@app.get("/healthz")
+async def healthz() -> PlainTextResponse:
+    return PlainTextResponse("ok", media_type="text/plain")
+
+
+def _ollama_http_timeout() -> float:
+    raw = os.environ.get("OLLAMA_HTTP_TIMEOUT_SECONDS", "180").strip()
+    try:
+        return max(5.0, float(raw))
+    except ValueError:
+        return 180.0
+
+
+def _moderation_num_predict() -> int:
+    raw = os.environ.get("MODERATION_NUM_PREDICT", "64").strip()
+    try:
+        v = int(raw)
+        return max(16, min(v, 512))
+    except ValueError:
+        return 64
+
+
+class ModerationRequest(BaseModel):
+    text: str
+
+
+def _moderate_text_sync(text: str) -> dict[str, Any]:
+    system_prompt = (
+        "Sen marifetli.com.tr moderatörüsün. Görevin metni denetleyip JSON formatında cevap vermektir.\n"
+        "Kurallar:\n"
+        "1. Küfür, hakaret ve beddua varsa status: RED, yoksa status: ONAY.\n"
+        "2. Sadece gerçek küfür ve hakaretleri bad_words listesine ekle.\n"
+        "3. KESİN KURAL: 'makrome', 'örgü' gibi hobi terimlerini ASLA kötü kelime sayma.\n"
+        'Cevap formatı: {"status": "RED", "bad_words": ["kelime1", "kelime2"]}'
+    )
+
+    full_prompt = (
+        f"<|begin_of_text|>system\n\n{system_prompt}<|eot_id|>"
+        f"user\n\nMetin: {text}<|eot_id|>"
+        f"assistant\n\n"
+    )
+
+    payload = {
+        "model": _ollama_model_tag(),
+        "prompt": full_prompt,
+        "stream": False,
+        "format": "json",
+        "options": {
+            "temperature": 0.01,
+            "num_predict": _moderation_num_predict(),
+        },
+    }
+
+    raw_content = ""
+    try:
+        url = f"{_ollama_base_url()}/api/generate"
+        response = requests.post(url, json=payload, timeout=_ollama_http_timeout())
+        response.raise_for_status()
+
+        raw_content = response.json().get("response", "{}").strip()
+
+        match = re.search(r"\{.*\}", raw_content, re.DOTALL)
+        if not match:
+            if any(word in raw_content.upper() for word in ["RED", "KÜFÜR", "HAKARET"]):
+                return {"status": "RED", "bad_words": [], "detail": "Yapay zeka metni reddetti."}
+            return {"status": "ONAY", "bad_words": []}
+
+        result = json.loads(match.group(0))
+
+        if "bad_words" in result:
+            result["bad_words"] = [w for w in result["bad_words"] if w.lower() not in GUVENLI_KELIMELER]
+
+        print(f"Başarılı Analiz: {result}")
+        return result
+
+    except Exception as e:
+        print(f"HATA AYIKLAMA (Ham Metin): {raw_content}")
+        err = str(e)
+        hint = ""
+        if "Connection refused" in err or "Failed to establish" in err:
+            hint = (
+                " Ollama bu konteynerde çalışmıyor; Railway Variables’ta "
+                "OLLAMA_HTTP_URL=http://<ollama-servis-adı>.railway.internal:11434 tanımla "
+                "(iki serviste de private networking açık olsun)."
+            )
+        return {"status": "RED", "bad_words": [], "detail": f"Hata: {err}{hint}"}
+
+
+@app.post("/moderate")
+async def moderate_text(request: ModerationRequest):
+    return _moderate_text_sync(request.text)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
