@@ -7,7 +7,6 @@ import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 from fastapi import FastAPI
@@ -26,15 +25,6 @@ def _ollama_model_tag() -> str:
 
 def _ollama_base_url() -> str:
     return os.environ.get("OLLAMA_HTTP_URL", "http://127.0.0.1:11434").rstrip("/")
-
-
-def _ollama_url_host_is_loopback(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
-    return host in ("127.0.0.1", "localhost", "::1")
-
-
-def _probably_railway() -> bool:
-    return bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
 
 
 def _ollama_startup_wait_seconds() -> float:
@@ -57,8 +47,6 @@ async def _wait_for_ollama_api() -> None:
     base = _ollama_base_url()
     tags_url = f"{base}/api/tags"
     wait_cap = _ollama_startup_wait_seconds()
-    if _probably_railway() and _ollama_url_host_is_loopback(base):
-        wait_cap = min(wait_cap, 20.0)
     deadline = time.monotonic() + wait_cap
     while time.monotonic() < deadline:
         try:
@@ -81,17 +69,9 @@ async def lifespan(app: FastAPI):
     base = _ollama_base_url()
     print(
         f"OLLAMA_HTTP_URL → {base} | model → {_ollama_model_tag()} "
-        "(docker-compose: http://ollama:11434; Railway: private Ollama URL)",
+        "(tek konteyner: varsayılan 127.0.0.1; harici Ollama için OLLAMA_HTTP_URL ver)",
         flush=True,
     )
-    if _probably_railway() and _ollama_url_host_is_loopback(base):
-        print(
-            "YAPILANDIRMA: Railway’de Ollama bu konteynerde değil. "
-            "Project → moderator servisi → Variables → OLLAMA_HTTP_URL = "
-            "http://<OLLAMA_SERVIS_ADIN>.railway.internal:11434 "
-            "(Ollama ayrı Railway servisi; iki serviste Private Networking açık olsun).",
-            flush=True,
-        )
     await _wait_for_ollama_api()
     yield
 
@@ -195,9 +175,9 @@ def _moderate_text_sync(text: str) -> dict[str, Any]:
         hint = ""
         if "Connection refused" in err or "Failed to establish" in err:
             hint = (
-                " Ollama adresi yanlış veya servis ayakta değil. Docker Compose: "
-                "OLLAMA_HTTP_URL=http://ollama:11434 ve `ollama` servisinin çalıştığından emin ol. "
-                "Railway: OLLAMA_HTTP_URL=http://<ollama>.railway.internal:11434 (private networking)."
+                " Ollama’ya bağlanılamıyor. Tek konteyner imajında entrypoint’in `ollama serve` "
+                "çalıştırdığından emin ol; varsayılan http://127.0.0.1:11434 doğrudur. "
+                "Harici Ollama kullanıyorsan OLLAMA_HTTP_URL’i ona göre ayarla."
             )
         return {"status": "RED", "bad_words": [], "detail": f"Hata: {err}{hint}"}
 
