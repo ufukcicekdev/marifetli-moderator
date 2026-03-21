@@ -7,6 +7,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 from fastapi import FastAPI
@@ -25,6 +26,15 @@ def _ollama_model_tag() -> str:
 
 def _ollama_base_url() -> str:
     return os.environ.get("OLLAMA_HTTP_URL", "http://127.0.0.1:11434").rstrip("/")
+
+
+def _ollama_url_host_is_loopback(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host in ("127.0.0.1", "localhost", "::1")
+
+
+def _probably_railway() -> bool:
+    return bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
 
 
 def _ollama_startup_wait_seconds() -> float:
@@ -46,7 +56,10 @@ def _ollama_generate_retries() -> int:
 async def _wait_for_ollama_api() -> None:
     base = _ollama_base_url()
     tags_url = f"{base}/api/tags"
-    deadline = time.monotonic() + _ollama_startup_wait_seconds()
+    wait_cap = _ollama_startup_wait_seconds()
+    if _probably_railway() and _ollama_url_host_is_loopback(base):
+        wait_cap = min(wait_cap, 20.0)
+    deadline = time.monotonic() + wait_cap
     while time.monotonic() < deadline:
         try:
             r = requests.get(tags_url, timeout=5)
@@ -57,7 +70,7 @@ async def _wait_for_ollama_api() -> None:
             pass
         await asyncio.sleep(2)
     print(
-        f"UYARI: {_ollama_startup_wait_seconds():.0f}s içinde Ollama yanıt vermedi ({tags_url}). "
+        f"UYARI: {wait_cap:.0f}s içinde Ollama yanıt vermedi ({tags_url}). "
         "İlk /moderate istekleri başarısız olabilir.",
         flush=True,
     )
@@ -71,6 +84,14 @@ async def lifespan(app: FastAPI):
         "(docker-compose: http://ollama:11434; Railway: private Ollama URL)",
         flush=True,
     )
+    if _probably_railway() and _ollama_url_host_is_loopback(base):
+        print(
+            "YAPILANDIRMA: Railway’de Ollama bu konteynerde değil. "
+            "Project → moderator servisi → Variables → OLLAMA_HTTP_URL = "
+            "http://<OLLAMA_SERVIS_ADIN>.railway.internal:11434 "
+            "(Ollama ayrı Railway servisi; iki serviste Private Networking açık olsun).",
+            flush=True,
+        )
     await _wait_for_ollama_api()
     yield
 
