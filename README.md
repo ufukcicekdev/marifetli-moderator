@@ -9,7 +9,7 @@
 | `ANYTHINGLLM_BASE_URL` | Evet | Örn. `https://senin-anythingllm.up.railway.app` (sonunda `/` yok) |
 | `ANYTHINGLLM_API_KEY` | Evet | AnythingLLM → Developer API anahtarı (`Bearer` ile gider) |
 | `ANYTHINGLLM_WORKSPACE_SLUG` | Evet | Workspace slug (URL’deki çalışma alanı) |
-| `ANYTHINGLLM_CHAT_MODE` | Hayır | `chat` (varsayılan), `automatic` veya `query` |
+| `ANYTHINGLLM_CHAT_MODE` | Hayır | `chat` (varsayılan) veya `query`. `automatic` yazsan da API’ye `chat` olarak gider (AnythingLLM sürüm uyumu). |
 | `ANYTHINGLLM_SESSION_ID` | Hayır | `/moderate` için oturum; varsayılan `marifetli-moderate-api` |
 | `ANYTHINGLLM_CHAT_SESSION_ID` | Hayır | `/chat` için varsayılan oturum; varsayılan `marifetli-chat-api` (boşsa `sessionId` gönderilmez) |
 | `ANYTHINGLLM_TIMEOUT_SECONDS` | Hayır | Varsayılan `180` |

@@ -96,7 +96,8 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="Kullanıcı mesajı (AnythingLLM’e iletilir).")
     mode: Literal["automatic", "query", "chat"] | None = Field(
         default=None,
-        description="Boşsa ANYTHINGLLM_CHAT_MODE veya 'chat' kullanılır.",
+        description="Boşsa ANYTHINGLLM_CHAT_MODE. 'automatic' istemci kolaylığı için kabul edilir; "
+        "AnythingLLM HTTP API birçok sürümde yalnızca 'chat' ve 'query' kabul ettiği için sunucuya 'chat' gider.",
     )
     session_id: str | None = Field(
         default=None,
@@ -106,8 +107,13 @@ class ChatRequest(BaseModel):
 
 
 def _resolve_chat_mode(mode: str | None) -> str:
+    """AnythingLLM /chat API: bazı kurulumlar 'automatic' modunu reddeder; yalnızca chat|query güvenli."""
     m = (mode or _anythingllm_chat_mode()).strip().lower()
-    return m if m in ("automatic", "query", "chat") else "chat"
+    if m not in ("automatic", "query", "chat"):
+        m = "chat"
+    if m == "automatic":
+        return "chat"
+    return m
 
 
 def _post_anythingllm_chat(
