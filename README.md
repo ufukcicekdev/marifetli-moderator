@@ -1,57 +1,54 @@
 # marifetli-moderator
 
-**FastAPI** ile metin moderasyonu: Ollama `/api/generate` üzerinden JSON cevap üretir.
+**FastAPI** ile metin moderasyonu: [AnythingLLM](https://docs.anythingllm.com/features/api) workspace chat API üzerinden (ör. Gemini) JSON cevap üretir.
+
+## Ortam değişkenleri
+
+| Değişken | Zorunlu | Açıklama |
+|----------|---------|----------|
+| `ANYTHINGLLM_BASE_URL` | Evet | Örn. `https://senin-anythingllm.up.railway.app` (sonunda `/` yok) |
+| `ANYTHINGLLM_API_KEY` | Evet | AnythingLLM → Developer API anahtarı (`Bearer` ile gider) |
+| `ANYTHINGLLM_WORKSPACE_SLUG` | Evet | Workspace slug (URL’deki çalışma alanı) |
+| `ANYTHINGLLM_CHAT_MODE` | Hayır | `chat` (varsayılan), `automatic` veya `query` |
+| `ANYTHINGLLM_SESSION_ID` | Hayır | `/moderate` için oturum; varsayılan `marifetli-moderate-api` |
+| `ANYTHINGLLM_CHAT_SESSION_ID` | Hayır | `/chat` için varsayılan oturum; varsayılan `marifetli-chat-api` (boşsa `sessionId` gönderilmez) |
+| `ANYTHINGLLM_TIMEOUT_SECONDS` | Hayır | Varsayılan `180` |
+| `PORT` | Hayır | Railway / container portu; varsayılan `8000` |
+
+Uç nokta: `{ANYTHINGLLM_BASE_URL}/api/v1/workspace/{slug}/chat`. Örnek şema: kendi kurulumunuzda `/api/docs`.
 
 ## Yerelde Docker
 
-1. `.env` (isteğe bağlı — `OLLAMA_MODEL` vb.):
-   ```bash
-   cp .env.example .env
-   ```
+1. Proje kökünde `.env` oluşturup en azından `ANYTHINGLLM_API_KEY` yazın (repoya eklemeyin).
 
-2. Ayağa kaldır (**Ollama** + **app**):
-   ```bash
-   docker compose up -d --build
-   ```
+2. `docker compose up --build`
 
-3. Ollama’ya model çek (ilk sefer):
-   ```bash
-   docker compose exec ollama ollama pull llama3
-   ```
-
-4. Test:
+3. Test:
    ```bash
    curl -s http://127.0.0.1:8000/healthz
    curl -s -X POST http://127.0.0.1:8000/moderate \
      -H "Content-Type: application/json" \
      -d '{"text":"merhaba makrome"}'
+   curl -s -X POST http://127.0.0.1:8000/chat \
+     -H "Content-Type: application/json" \
+     -d '{"message":"Merhaba, makrome ipuçları verir misin?"}'
    ```
 
-5. Swagger: http://127.0.0.1:8000/docs  
-
-`app` servisi `OLLAMA_HTTP_URL=http://ollama:11434` ile compose içindeki Ollama’ya bağlanır.
+4. Swagger: http://127.0.0.1:8000/docs
 
 ## Railway
 
-Bu imaj **sadece FastAPI** çalıştırır; konteyner içinde **Ollama yok**. `127.0.0.1:11434` varsayılanı Railway’de **Connection refused** verir.
-
-1. Aynı projede **`ollama/ollama`** ile ikinci bir servis aç (volume: `/root/.ollama`, model: shell’den `ollama pull …`).
-2. **Her iki serviste** de **Private Networking** açık olsun.
-3. Moderasyon servisinin **Variables**:
-   - `OLLAMA_HTTP_URL=http://OLLAMA-SERVIS-ADIN.railway.internal:11434`  
-     (`OLLAMA-SERVIS-ADIN` = Railway’de Ollama servisine verdiğin isim, örn. `ollama`).
-4. Moderasyon servisini **yeniden deploy** et.
+Moderasyon servisinin **Variables** içine `ANYTHINGLLM_BASE_URL`, `ANYTHINGLLM_API_KEY`, `ANYTHINGLLM_WORKSPACE_SLUG` ekleyin; ardından yeniden deploy edin.
 
 **Health check:** `/healthz` · **Public port:** `PORT` (Railway otomatik).
 
 ## Sadece Python (Docker’sız)
 
-Ollama’nın `http://127.0.0.1:11434` adresinde çalışıyor olması gerekir.
-
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+export ANYTHINGLLM_BASE_URL=... ANYTHINGLLM_API_KEY=... ANYTHINGLLM_WORKSPACE_SLUG=...
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -60,4 +57,5 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 | Yöntem | Yol | Açıklama |
 |--------|-----|----------|
 | GET | `/healthz` | `ok` |
-| POST | `/moderate` | Gövde: `{"text":"..."}` |
+| POST | `/moderate` | Gövde: `{"text":"..."}` — moderasyon JSON’u |
+| POST | `/chat` | Gövde: `{"message":"...", "mode"?: "chat"|"query"|"automatic", "session_id"?: "...", "reset"?: false}` — genel sohbet |

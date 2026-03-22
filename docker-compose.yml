@@ -1,4 +1,3 @@
-# Tek servis: Ollama + moderasyon API (imaj içinde ikisi birden).
 services:
   app:
     build: .
@@ -10,9 +9,7 @@ services:
     restart: unless-stopped
     environment:
       PORT: "8000"
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
-    volumes:
-      - ollama_data:/root/.ollama
-
-volumes:
-  ollama_data:
+      ANYTHINGLLM_BASE_URL: https://anythingllm-production-6381.up.railway.app
+      ANYTHINGLLM_WORKSPACE_SLUG: marifetli-ai
+      ANYTHINGLLM_CHAT_MODE: chat
+      # ANYTHINGLLM_API_KEY: .env veya Railway Variables (asla repoya yazma)
