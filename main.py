@@ -10,7 +10,7 @@ from typing import Any, Literal
 import requests
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 GUVENLI_KELIMELER = {"makrome", "örgü", "dantel", "iğne oyası", "elişi", "hobi", "amigurumi", "kasnak"}
 
@@ -92,8 +92,32 @@ class ModerationRequest(BaseModel):
     text: str
 
 
+class ChatAttachmentPart(BaseModel):
+    """AnythingLLM ile uyumlu: name, mime, contentString (data URL)."""
+
+    name: str = Field(default="image.png", min_length=1)
+    mime: str = Field(..., description="Örn. image/png, image/jpeg, image/webp")
+    content_base64: str = Field(
+        ...,
+        description="Yalnızca base64 veya tam `data:image/...;base64,...` verisi.",
+    )
+
+    def to_anythingllm(self) -> dict[str, str]:
+        raw = self.content_base64.strip()
+        if raw.startswith("data:"):
+            return {"name": self.name, "mime": self.mime, "contentString": raw}
+        return {
+            "name": self.name,
+            "mime": self.mime,
+            "contentString": f"data:{self.mime.strip()};base64,{raw}",
+        }
+
+
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, description="Kullanıcı mesajı (AnythingLLM’e iletilir).")
+    message: str = Field(
+        default="",
+        description="Metin istemi. Ek varsa ve boş bırakılırsa sunucu kısa bir varsayılan metin gönderir.",
+    )
     mode: Literal["automatic", "query", "chat"] | None = Field(
         default=None,
         description="Boşsa ANYTHINGLLM_CHAT_MODE. 'automatic' istemci kolaylığı için kabul edilir; "
@@ -104,6 +128,60 @@ class ChatRequest(BaseModel):
         description="Sohbet oturumu; boşsa ANYTHINGLLM_CHAT_SESSION_ID (varsayılan marifetli-chat-api).",
     )
     reset: bool = Field(default=False, description="AnythingLLM reset bayrağı.")
+    attachment_base64: str | None = Field(
+        default=None,
+        description="Tek görsel/dosya: ham base64 (AnythingLLM’e data URL olarak paketlenir).",
+    )
+    attachment_mime_type: str | None = Field(
+        default=None,
+        description="Tek ek için MIME, örn. image/png. attachment_base64 ile birlikte kullanılır.",
+    )
+    attachment_name: str | None = Field(
+        default=None,
+        description="Tek ek dosya adı; boşsa image.png.",
+    )
+    attachments: list[ChatAttachmentPart] | None = Field(
+        default=None,
+        description="Çoklu ek; AnythingLLM şemasıyla aynı (name, mime, content_base64).",
+    )
+
+    @model_validator(mode="after")
+    def _attachment_pair_and_message(self) -> ChatRequest:
+        b64 = (self.attachment_base64 or "").strip()
+        mime = (self.attachment_mime_type or "").strip()
+        has_single = bool(b64 or mime)
+        if has_single and (not b64 or not mime):
+            raise ValueError(
+                "attachment_base64 ve attachment_mime_type birlikte ve dolu olmalı (veya ikisini de gönderme)."
+            )
+        has_multi = bool(self.attachments)
+        if not (self.message or "").strip() and not has_single and not has_multi:
+            raise ValueError("message veya en az bir ek (attachment_*, attachments) gerekli.")
+        return self
+
+
+def _chat_request_attachments_payload(req: ChatRequest) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    if req.attachments:
+        for part in req.attachments:
+            out.append(part.to_anythingllm())
+    b64 = (req.attachment_base64 or "").strip()
+    mime = (req.attachment_mime_type or "").strip()
+    if b64 and mime:
+        name = (req.attachment_name or "image.png").strip() or "image.png"
+        out.append(
+            ChatAttachmentPart(name=name, mime=mime, content_base64=b64).to_anythingllm()
+        )
+    return out
+
+
+def _chat_message_for_upstream(req: ChatRequest) -> str:
+    msg = (req.message or "").strip()
+    if msg:
+        return msg
+    if _chat_request_attachments_payload(req):
+        return "Bu görseli veya ekleri incele ve kısaca açıkla."
+    return msg
 
 
 def _resolve_chat_mode(mode: str | None) -> str:
@@ -122,6 +200,7 @@ def _post_anythingllm_chat(
     mode: str | None = None,
     session_id: str | None = None,
     reset: bool = False,
+    attachments: list[dict[str, str]] | None = None,
 ) -> requests.Response:
     url = _chat_url()
     if not url:
@@ -140,6 +219,8 @@ def _post_anythingllm_chat(
     sid = session_id
     if sid:
         payload["sessionId"] = sid
+    if attachments:
+        payload["attachments"] = attachments
 
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     timeout = _http_timeout_seconds()
@@ -235,11 +316,13 @@ def _chat_sync(req: ChatRequest) -> dict[str, Any]:
     else:
         sid = req.session_id.strip() or None
     try:
+        atts = _chat_request_attachments_payload(req)
         response = _post_anythingllm_chat(
-            req.message.strip(),
+            _chat_message_for_upstream(req),
             mode=req.mode,
             session_id=sid,
             reset=req.reset,
+            attachments=atts or None,
         )
         try:
             body = response.json()

@@ -58,4 +58,4 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 |--------|-----|----------|
 | GET | `/healthz` | `ok` |
 | POST | `/moderate` | Gövde: `{"text":"..."}` — moderasyon JSON’u |
-| POST | `/chat` | Gövde: `{"message":"...", "mode"?: "chat"|"query"|"automatic", "session_id"?: "...", "reset"?: false}` — genel sohbet |
+| POST | `/chat` | Metin + isteğe bağlı görsel: `attachment_base64` + `attachment_mime_type` (örn. `image/png`) veya `attachments[]` (`name`, `mime`, `content_base64`). AnythingLLM’e `data:...;base64,...` olarak iletilir; vision için workspace’te görüntü destekleyen LLM (örn. Gemini vision) seçili olmalı. |
